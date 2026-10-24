@@ -1,0 +1,24 @@
+# OS
+.DS_Store
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Dart / Flutter
+.dart_tool/
+.packages
+build/
+pubspec.lock
+example/pubspec.lock
+
+# Platform build outputs
+**/android/.gradle/
+**/android/local.properties
+**/ios/Pods/
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
+
+# FFI test databases
+**/sqflite_common_ffi/

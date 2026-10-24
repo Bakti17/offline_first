@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  core:
+    name: core (dart)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/offline_first_core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - run: dart pub get
+      - run: dart analyze
+      - run: dart test
+
+  flutter:
+    name: flutter package + example
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Analyze + test package
+        working-directory: packages/offline_first
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
+      - name: Analyze + test example
+        working-directory: packages/offline_first/example
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
