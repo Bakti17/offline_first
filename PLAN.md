@@ -1,4 +1,4 @@
-# offline_first — Architecture Plan
+# offline_first — Architecture Decision Record
 
 Offline-first Dart packages: apps write to a local outbox queue, a sync engine
 drains the queue to per-feature API endpoints when online. Triggers: automatic
@@ -9,60 +9,62 @@ drains the queue to per-feature API endpoints when online. Triggers: automatic
 | Decision | Choice | Reason |
 |---|---|---|
 | Scope | Pure Dart core + Flutter adapter package | Core reusable server-side/CLI; Flutter-only deps isolated |
-| HTTP | dio | Interceptors (auth/token refresh), typed errors |
+| HTTP | dio | Interceptors (auth/token refresh), typed errors; pure Dart so it stays in core |
 | Storage | sqflite | Raw SQL, no codegen, mature; outbox rows are generic JSON |
 | Sync v1 | Push only | Outbox drain to API; pull/cache layer is a later phase |
 | Encryption | `secure` flag per feature, AES-GCM at rest | Sensitive features (payments, PII) encrypted before hitting storage |
+| FIFO guarantee | Store returns pure FIFO; engine enforces backoff/head-of-line blocking | Time-filtering in the store would silently skip blocked heads and send later ops out of order |
+| Encryption boundary | Encrypt at enqueue, decrypt at send (marker-based) | Send-time encryption would double-encrypt or leak plaintext to storage |
 
-## Repo layout
+## Repo layout (as built)
 
 ```
 packages/
-  offline_first_core/          # pure Dart (deps: dio only)
-    lib/src/
-      config/
-        offline_first_config.dart   # baseUrl, default retry policy, feature list
-        feature_config.dart         # name, endpoint, syncOnConnect, syncInterval,
-                                    # secure (encrypt payload at rest)
-        sync_endpoint.dart          # path, method, extra headers
-      crypto/
-        payload_cipher.dart         # abstract: encrypt(bytes)->bytes, decrypt
-      models/
-        sync_operation.dart         # id, feature, type, payload, idempotencyKey,
-                                    # status, attempts, lastError, sequence, createdAt
-        sync_status.dart            # pending / inFlight / synced / failed / dead
-        sync_result.dart
-      outbox/
-        outbox_store.dart           # abstract: enqueue, nextBatch, markStatus, purge
-        memory_outbox_store.dart    # in-memory impl (tests, examples)
-      network/
-        http_adapter.dart           # abstract: send(request) -> Response
-        dio_http_adapter.dart       # dio impl (dio is pure Dart — lives here)
-        connectivity_adapter.dart   # abstract: Stream<bool> isOnline
-      sync/
-        sync_engine.dart            # FIFO drain per feature, parallel across features
-        sync_scheduler.dart         # on-connect trigger + periodic Timers
-        retry_policy.dart           # exponential backoff + jitter, maxAttempts,
-                                    # retryable status codes
-        conflict_resolver.dart      # pluggable, default last-write-wins (409)
-      offline_first_core.dart       # facade: initialize, enqueue, syncNow, syncAll,
-                                    # statusStream
-  offline_first/               # Flutter package (facade + platform adapters)
+  offline_first_core/                  # pure Dart (deps: dio only)
     lib/
-      offline_first.dart            # re-exports core + Flutter factory
-      src/adapters/
-        connectivity_plus_adapter.dart   # connectivity_plus impl
-        flutter_secure_payload_cipher.dart # AES-GCM, key in flutter_secure_storage
-        sqflite_outbox_store.dart   # sqflite impl of OutboxStore
-        connectivity_plus_adapter.dart
-  example/                     # later: demo Flutter app
+      offline_first_core.dart          # barrel: public API + dio re-export
+      src/
+        config/
+          offline_first_config.dart    # baseUrl, batch size, concurrency, feature lookup
+          feature_config.dart          # name, endpoint, syncOnConnect, syncInterval, secure
+          sync_endpoint.dart           # path, method, extra headers, URL join
+        crypto/
+          payload_cipher.dart          # PayloadCipher interface + NoopCipher
+        models/
+          sync_operation.dart          # id, feature, type, payload, idempotencyKey,
+                                       # status, attempts, lastError, nextAttemptAt, sequence
+          sync_status.dart             # pending / inFlight / synced / failed / dead
+          sync_result.dart
+        network/
+          http_adapter.dart            # HttpRequest/HttpResponse + HttpAdapter
+          dio_http_adapter.dart        # dio impl (validateStatus always true — engine classifies)
+          connectivity_adapter.dart    # ConnectivityAdapter + StaticConnectivity
+        outbox/
+          outbox_store.dart            # enqueue, nextBatch, retryable, update, purge, counts
+          memory_outbox_store.dart     # in-memory impl (tests, examples)
+        sync/
+          sync_engine.dart             # FIFO drain, backoff eligibility, dead-letter,
+                                       # ciphertext marker decrypt at send
+          sync_scheduler.dart          # on-connect edge + periodic Timers
+          retry_policy.dart            # exponential backoff + full jitter, decision classifier
+          conflict_resolver.dart       # last-write-wins / server-wins
+          sync_events.dart             # SyncStatusEvent + SyncPhase
+        offline_first.dart             # facade: initialize, enqueue, syncNow, syncAll,
+                                       # retryFailed, purgeSynced, queueCounts, statusStream,
+                                       # forFeature -> FeatureHandle
+  offline_first/                       # Flutter package (adapters + core re-export)
+    lib/
+      offline_first.dart               # barrel: exports core + adapters
+      src/adapters.dart                # SqfliteOutboxStore, ConnectivityPlusAdapter,
+                                       # FlutterSecurePayloadCipher (AES-256-GCM)
+    example/                           # demo app (cart auto-sync + manual encrypted transactions)
 ```
 
-## Public API (target)
+## Public API (final)
 
 ```dart
 final offline = OfflineFirst(
-  config: OfflineFirstConfig(
+  config: const OfflineFirstConfig(
     baseUrl: 'https://api.example.com',
     features: [
       FeatureConfig(
@@ -78,25 +80,26 @@ final offline = OfflineFirst(
         secure: true,                         // payload encrypted at rest
       ),
     ],
-    store: SqfliteOutboxStore(),              // injected
-    http: DioHttpAdapter(dio: dioWithAuth),   // injected (auth via interceptor)
-    connectivity: ConnectivityPlusAdapter(),  // injected; null = manual-only mode
-    cipher: FlutterSecurePayloadCipher(),     // required if any feature is secure
   ),
+  store: SqfliteOutboxStore(),              // injected
+  http: DioHttpAdapter(dio: dio),           // injected (auth via interceptor)
+  connectivity: ConnectivityPlusAdapter(),  // injected; null = manual-only mode
+  cipher: FlutterSecurePayloadCipher(),     // required if any feature is secure
 );
 await offline.initialize();
 
 // Write — instant, local, never blocks on network
-await offline.forFeature('cart').enqueue(
-  SyncOperation.create(payload: {'itemId': 'x', 'qty': 2}),
-);
+await offline.forFeature('cart').create({'itemId': 'x', 'qty': 2});
 
 // Manual triggers
 await offline.forFeature('transactions').syncNow();
 await offline.syncAll();
 
+// Dead-letter recovery
+await offline.retryFailed(featureName: 'cart');
+
 // UI status
-offline.statusStream.listen((s) => ...); // per-feature depth + sync state
+offline.statusStream.listen((s) => ...); // per-feature counts + phase
 ```
 
 ## Secure data handling
@@ -105,9 +108,10 @@ offline.statusStream.listen((s) => ...); // per-feature depth + sync state
   stored as `{'__ciphertext': '<base64>'}`. Engine detects the marker and
   decrypts in memory only at send time (API receives plaintext JSON; TLS
   covers transit). Storage layer never sees plaintext for secure features.
-- `PayloadCipher` interface in core; AES-GCM (`package:cryptography`) impl in the
-  Flutter package, key generated on first use, stored in
-  `flutter_secure_storage` (Keychain / Keystore).
+- `PayloadCipher` interface in core; AES-256-GCM (`package:cryptography`) impl in
+  the Flutter package, wire format `nonce(12) | ciphertext | mac(16)`, key
+  generated on first use, stored in `flutter_secure_storage`
+  (Keychain / Keystore).
 - Cipher applies to payload only — metadata (status, attempts, timestamps)
   stays plaintext for queue inspection.
 - Constructor throws if any feature is `secure` but no cipher injected.
@@ -117,23 +121,21 @@ offline.statusStream.listen((s) => ...); // per-feature depth + sync state
 ## Sync semantics
 
 - **Ordering**: FIFO per feature by monotonic `sequence`. Features sync in parallel.
-- **Auto triggers**: offline→online edge fires `syncAll()` for `syncOnConnect`
+- **Blocking**: a failed head (retryable, terminal, or backoff-waiting) blocks
+  later ops of the same feature until it syncs or is dropped — no out-of-order sends.
+- **Auto triggers**: offline→online edge fires sync for `syncOnConnect`
   features; per-feature `Timer` for `syncInterval`.
-- **Retry**: exponential backoff + jitter, `maxAttempts`, then `dead` (inspectable,
-  re-syncable). Retryable: 5xx, 429, network errors.
-- **Non-retryable**: 4xx (except 409/429) → `failed` immediately, no retry burn.
-- **409** → pluggable `ConflictResolver` (default last-write-wins).
+- **Retry**: exponential backoff + full jitter, `maxAttempts`, then `dead`
+  (inspectable, `retryFailed()` requeues). Retryable: 5xx, 429, 408, network errors.
+- **Non-retryable**: other 4xx → `failed` immediately, no retry burn.
+- **409** → pluggable `ConflictResolver` (default last-write-wins; server-wins drops op).
 - **Idempotency**: `Idempotency-Key` header from `op.idempotencyKey ?? op.id`.
-- **Retention**: synced ops purgeable (configurable keep-window for debugging).
+- **Bookkeeping**: `attempts` counts every send including the successful one.
+- **Retention**: `purgeSynced()` removes synced ops older than a keep-window.
 
-## Milestones
+## Status
 
-1. `offline_first_core` scaffold: models, config, `OutboxStore`/`HttpAdapter`/
-   `ConnectivityAdapter` interfaces, `MemoryOutboxStore`, `DioHttpAdapter`
-2. `SyncEngine`: FIFO drain, retry + backoff, dead-letter, status stream
-3. `SyncScheduler`: on-connect + periodic triggers; core facade wiring
-4. `offline_first` Flutter package: `SqfliteOutboxStore`,
-   `ConnectivityPlusAdapter`, facade factory
-5. Tests: core unit tests (fake store/http), adapter tests
-6. Example app + README + docs
-
+All v1 milestones shipped — core engine, scheduler, facade, Flutter adapters,
+example app, CI, docs. Deferred: pull/cache layer (server → local),
+bidirectional sync, on-device integration tests for cipher/connectivity
+adapters (platform channels).

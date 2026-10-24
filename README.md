@@ -10,9 +10,9 @@ per-feature API endpoints when connectivity returns. Auto triggers
 
 | Package | Description |
 |---|---|
-| [`packages/offline_first_core`](packages/offline_first_core) | Pure Dart engine: outbox, per-feature config, sync, retry, encryption interfaces |
-| [`packages/offline_first`](packages/offline_first) | Flutter adapters: sqflite store, connectivity_plus, AES-GCM cipher + secure key storage |
-| [`packages/offline_first/example`](packages/offline_first/example) | Demo app |
+| [`offline_first_core`](packages/offline_first_core) | Pure Dart engine: outbox, per-feature config, sync, retry, encryption interfaces. Usable without Flutter (CLI, server). |
+| [`offline_first`](packages/offline_first) | Flutter adapters: sqflite store, connectivity_plus, AES-GCM cipher + secure key storage. Re-exports the full core API. |
+| [`example`](packages/offline_first/example) | Demo app: auto-sync cart, manual encrypted transactions, live queue status. |
 
 See [PLAN.md](PLAN.md) for the architecture decision record.
 
@@ -67,12 +67,30 @@ app write ──► encrypt (secure) ──► outbox (pending)
         other 4xx ── failed (no retry)
 ```
 
-## Status
+## Development
 
-- [x] Milestone 1 — core models, config, store/HTTP/connectivity interfaces
-- [x] Milestone 2 — sync engine: FIFO, backoff, dead-letter, status events
-- [x] Milestone 3 — scheduler (connectivity + periodic) and facade
-- [x] Milestone 4 — Flutter adapters (sqflite, connectivity_plus, AES-GCM)
-- [x] Milestone 5 — tests (33 core + 6 adapter)
-- [x] Milestone 6 — example app + docs
-- [ ] Later — pull/cache layer (server → local), bidirectional sync
+```sh
+# Core (pure Dart)
+cd packages/offline_first_core
+dart pub get && dart analyze && dart test
+
+# Flutter package
+cd packages/offline_first
+flutter pub get && flutter analyze && flutter test
+
+# Example app
+cd packages/offline_first/example
+flutter pub get && flutter run
+```
+
+CI runs the same checks on push/PR (`.github/workflows/ci.yml`).
+
+## Contributing
+
+Issues and PRs welcome. Run `dart analyze`/`flutter analyze` and the test
+suites before submitting; keep the architecture decisions in
+[PLAN.md](PLAN.md) in sync with notable changes.
+
+## License
+
+[MIT](LICENSE)

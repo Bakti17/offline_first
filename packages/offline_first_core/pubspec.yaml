@@ -1,9 +1,9 @@
 name: offline_first_core
 description: Pure Dart offline-first engine — outbox queue, per-feature sync endpoints, auto/manual sync triggers, encrypted-at-rest payloads.
 version: 0.0.1
-homepage: https://github.com/your-github-username/offline_first
-repository: https://github.com/your-github-username/offline_first
-issue_tracker: https://github.com/your-github-username/offline_first/issues
+homepage: https://github.com/bakti17/offline_first
+repository: https://github.com/bakti17/offline_first
+issue_tracker: https://github.com/bakti17/offline_first/issues
 
 environment:
   sdk: ^3.12.0

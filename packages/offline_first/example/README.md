@@ -1,17 +1,22 @@
 # offline_first_example
 
-A new Flutter project.
+Demo app for the `offline_first` packages (see the repository root).
 
-## Getting Started
+## What it shows
 
-This project is a starting point for a Flutter application.
+- **Cart** — auto-sync feature (`syncOnConnect: true` + 5-minute periodic interval)
+- **Transactions** — manual-only feature, encrypted at rest (`secure: true`)
+- Live `statusStream` binding (queue phases and counts)
+- Buttons for `syncNow`, `syncAll`, `retryFailed`, `purgeSynced`
 
-A few resources to get you started if this is your first Flutter project:
+## Running
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+```sh
+flutter pub get
+flutter run
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+The app posts to `https://api.example.com` by default — point
+`baseUrl` in [`lib/main.dart`](lib/main.dart) at your own backend (any
+echoing 2xx endpoint works). Toggle airplane mode to watch the outbox
+drain on reconnect.
